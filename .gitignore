@@ -1,0 +1,8 @@
+﻿__pycache__/
+*.py[cod]
+.env
+data/
+models/
+logs/
+results/
+.ipynb_checkpoints/

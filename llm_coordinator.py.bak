@@ -1,0 +1,43 @@
+﻿import os
+import base64
+import requests
+from config import CONFIG
+
+class GigaChatExplainer:
+    def __init__(self, client_id: str = CONFIG.GIGACHAT_CLIENT_ID, client_secret: str = None):
+        self.client_id = client_id
+        self.client_secret = client_secret or os.getenv("GIGACHAT_CLIENT_SECRET", "")
+        if not self.client_secret:
+            print("⚠️ GIGACHAT_CLIENT_SECRET не задан. Будет использован fallback-режим.")
+        self.access_token = None
+        self.auth_url = CONFIG.GIGACHAT_AUTH_URL
+        self.api_url = CONFIG.GIGACHAT_API_URL
+        if self.client_secret: self._refresh_token()
+
+    def _refresh_token(self):
+        try:
+            auth_str = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode()).decode()
+            headers = {"Authorization": f"Basic {auth_str}", "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"}
+            resp = requests.post(self.auth_url, headers=headers, data={"scope": CONFIG.GIGACHAT_SCOPE}, timeout=15)
+            resp.raise_for_status()
+            self.access_token = resp.json()['access_token']
+            print("✅ GigaChat token refreshed")
+        except Exception as e:
+            print(f"❌ Auth failed: {e}")
+
+    def explain(self, top_features: dict, profile: str) -> str:
+        if not self.access_token:
+            return f"Профиль: {profile}. Рекомендация сформирована на основе DP+RL расчётов (LLM недоступен)."
+        prompt = f"Профиль инвестора: {profile}. Объясни кратко, почему система рекомендует изменить '{list(top_features.keys())[0]}': значение {list(top_features.values())[0]:.2f}."
+        headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+        data = {"model": "GigaChat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3}
+        try:
+            resp = requests.post(self.api_url, headers=headers, json=data, timeout=20)
+            if resp.status_code == 401:
+                self._refresh_token()
+                headers["Authorization"] = f"Bearer {self.access_token}"
+                resp = requests.post(self.api_url, headers=headers, json=data, timeout=20)
+            resp.raise_for_status()
+            return resp.json()['choices'][0]['message']['content']
+        except Exception as e:
+            return f"️ LLM fallback: {str(e)[:100]}"
